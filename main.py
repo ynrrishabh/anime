@@ -72,11 +72,43 @@ async def get_anime_details_jikan(anime_id: int) -> Optional[Dict]:
         logger.error(f"Error getting anime details from Jikan: {e}")
         return None
 
+async def search_gogoanime(query: str) -> Optional[Dict]:
+    """Search anime on Gogoanime"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{GOGOANIME_API_BASE}/search",
+                params={"query": query}
+            ) as response:
+                if response.status == 200:
+                    return await response.json()
+                return None
+    except Exception as e:
+        logger.error(f"Error searching Gogoanime: {e}")
+        return None
+
 async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
     """Get streaming links from Gogoanime API"""
     try:
+        # First get the anime details from Jikan to get the title
+        anime_details = await get_anime_details_jikan(int(anime_id))
+        if not anime_details:
+            return None
+            
+        title = anime_details['data']['title']
+        
+        # Search for the anime on Gogoanime
+        search_results = await search_gogoanime(title)
+        if not search_results or not search_results.get("results"):
+            logger.error(f"No results found on Gogoanime for: {title}")
+            return None
+            
+        # Get the first result's ID
+        gogo_id = search_results["results"][0]["id"]
+        
+        # Now get the streaming links
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{GOGOANIME_API_BASE}/watch/{anime_id}") as response:
+            async with session.get(f"{GOGOANIME_API_BASE}/watch/{gogo_id}") as response:
                 if response.status == 200:
                     return await response.json()
                 return None
@@ -127,7 +159,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /anime command"""
     try:
         if not context.args:
-            await update.message.reply_text(
+            await update.message.reply_text(s
                 "❗ Usage: /anime <name>\nExample: /anime naruto",
                 parse_mode='Markdown'
             )
@@ -209,6 +241,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
             
         elif action == "watch":
+            # Show loading message
+            await query.edit_message_text("🔍 Searching for streaming links...", parse_mode='Markdown')
+            
             # Try to get streaming links from Gogoanime
             stream_data = await get_streaming_links_gogoanime(anime_id)
             
@@ -219,8 +254,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             
-            video_url = stream_data["sources"][0]["url"]
-            player_url = f"https://animep.onrender.com/watch?src={video_url}"
+            # Get the first available source
+            sources = stream_data["sources"]
+            if not sources:
+                await query.edit_message_text(
+                    "❌ No streaming sources found. Please try again later.",
+                    parse_mode='Markdown'
+                )
+                return
+                
+            video_url = sources[0]["url"]
+            player_url = f"https://animep.onrender.com/watch?src={urllib.parse.quote(video_url)}"
             
             await query.edit_message_text(
                 f"▶️ Click the link below to watch:\n{player_url}",
