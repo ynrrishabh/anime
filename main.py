@@ -1,16 +1,22 @@
 import os
+import asyncio
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Load from environment
+# Load tokens and URLs from environment
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g., "https://your-app-name.onrender.com"
 
+# FastAPI app
 fastapi_app = FastAPI()
 
-# Telegram command handlers
+# Initialize Telegram bot app
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# --- Command Handlers ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎬 Send /anime <name> to watch an anime!")
 
@@ -27,7 +33,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         anime_id = res[0]["id"]
         title = res[0]["title"]
 
-        # Fetch episode info
+        # Get episode info
         ep_data = requests.get(f"https://consumet-api-0kir.onrender.com/anime/gogoanime/info/{anime_id}").json()
         first_ep_id = ep_data["episodes"][0]["id"]
 
@@ -42,32 +48,35 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Anime not found or error occurred.")
         print("Error:", e)
 
-# Telegram app setup
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+# Register handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("anime", anime))
 
-# FastAPI dummy endpoints (for Render health checks & POST support)
+# --- FastAPI Routes ---
+
 @fastapi_app.get("/")
 def root():
     return {"status": "Bot is running!"}
 
 @fastapi_app.post("/")
-async def telegram_webhook():
+async def webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, app.bot)
+    await app.update_queue.put(update)
     return {"status": "received"}
 
-# Main async function
-import asyncio
+# --- Main App Runner ---
 
 async def main():
-    await app.bot.set_webhook(WEBHOOK_URL)  # 👈 dynamic from env
     await app.initialize()
+    await app.bot.set_webhook(WEBHOOK_URL)
     await app.start()
-    print(f"Bot started with webhook: {WEBHOOK_URL}")
+    print(f"✅ Bot is live with webhook set to: {WEBHOOK_URL}")
 
-# Start everything
+# Entry point
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(main())
+
     import uvicorn
     uvicorn.run(fastapi_app, host="0.0.0.0", port=10000)
