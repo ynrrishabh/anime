@@ -92,15 +92,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in help command: {e}")
 
 async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not context.args:
+    if not context.args:
         await update.message.reply_text("❗ Usage: /anime <name>\nExample: /anime naruto")
-            return
-        query = " ".join(context.args)
+        return
+    query = " ".join(context.args)
     msg = await update.message.reply_text("🔍 Searching for anime...")
     results = await search_animesalt(query)
     if not results:
         await msg.edit_text("❌ No series found. Please check the name and try again.")
-            return
+        return
     keyboard = [[InlineKeyboardButton(r["title"], callback_data=f"series:{r['url']}")] for r in results]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await msg.edit_text("🎬 *Select a series:*", reply_markup=reply_markup, parse_mode='Markdown')
