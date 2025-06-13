@@ -22,7 +22,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # API URLs
 JIKAN_API_BASE = "https://api.jikan.moe/v4"
-GOGOANIME_API_BASE = "https://consumet-api-0kir.onrender.com/anime/gogoanime"
+ZORO_API_BASE = "https://consumet-api-0kir.onrender.com/anime/zoro"
 
 # Validate environment variables
 if not BOT_TOKEN:
@@ -72,41 +72,23 @@ async def get_anime_details_jikan(anime_id: int) -> Optional[Dict]:
         logger.error(f"Error getting anime details from Jikan: {e}")
         return None
 
-async def search_gogoanime(query: str, page: int = 1) -> Optional[Dict]:
-    """Search anime on Gogoanime"""
+async def search_zoro(query: str) -> Optional[Dict]:
+    """Search anime on Zoro"""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{GOGOANIME_API_BASE}/{query}",
-                params={"page": page}
-            ) as response:
+            async with session.get(f"{ZORO_API_BASE}/{query}") as response:
                 if response.status == 200:
                     data = await response.json()
-                    logger.info(f"Gogoanime search response: {data}")
+                    logger.info(f"Zoro search response: {data}")
                     return data
-                logger.error(f"Gogoanime search failed with status: {response.status}")
+                logger.error(f"Zoro search failed with status: {response.status}")
                 return None
     except Exception as e:
-        logger.error(f"Error searching Gogoanime: {e}")
+        logger.error(f"Error searching Zoro: {e}")
         return None
 
-async def get_anime_servers(episode_id: str) -> Optional[Dict]:
-    """Get available servers for an episode"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{GOGOANIME_API_BASE}/servers/{episode_id}") as response:
-                if response.status == 200:
-                    data = await response.json()
-                    logger.info(f"Got servers data: {data}")
-                    return data
-                logger.error(f"Failed to get servers with status: {response.status}")
-                return None
-    except Exception as e:
-        logger.error(f"Error getting servers: {e}")
-        return None
-
-async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
-    """Get streaming links from Gogoanime API"""
+async def get_streaming_links_zoro(anime_id: str) -> Optional[Dict]:
+    """Get streaming links from Zoro API"""
     try:
         # First get the anime details from Jikan to get the title
         anime_details = await get_anime_details_jikan(int(anime_id))
@@ -114,15 +96,15 @@ async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
             return None
             
         title = anime_details['data']['title']
-        logger.info(f"Searching Gogoanime for title: {title}")
+        logger.info(f"Searching Zoro for title: {title}")
         
-        # Search for the anime on Gogoanime
-        search_results = await search_gogoanime(title)
+        # Search for the anime on Zoro
+        search_results = await search_zoro(title)
         if not search_results or not search_results.get("results"):
-            logger.error(f"No results found on Gogoanime for: {title}")
+            logger.error(f"No results found on Zoro for: {title}")
             return None
             
-        # Get the first result's episode ID
+        # Get the first result's ID
         first_result = search_results["results"][0]
         episode_id = first_result.get("id")
         if not episode_id:
@@ -131,21 +113,14 @@ async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
             
         logger.info(f"Found episode ID: {episode_id}")
         
-        # Get available servers for this episode
-        servers_data = await get_anime_servers(episode_id)
-        if not servers_data or not servers_data.get("servers"):
-            logger.error("No servers found for this episode")
-            return None
-            
-        # Use the first available server (usually gogocdn)
-        server_name = servers_data["servers"][0]["name"]
-        logger.info(f"Using server: {server_name}")
-        
-        # Get streaming links using the selected server
+        # Get streaming links using vidcloud server
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{GOGOANIME_API_BASE}/watch/{episode_id}",
-                params={"server": server_name}
+                f"{ZORO_API_BASE}/watch",
+                params={
+                    "episodeId": episode_id,
+                    "server": "vidcloud"
+                }
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -154,7 +129,7 @@ async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
                 logger.error(f"Failed to get streaming links with status: {response.status}")
                 return None
     except Exception as e:
-        logger.error(f"Error getting streaming links from Gogoanime: {e}")
+        logger.error(f"Error getting streaming links from Zoro: {e}")
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,8 +260,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Show loading message
             await query.edit_message_text("🔍 Searching for streaming links...", parse_mode='Markdown')
             
-            # Try to get streaming links from Gogoanime
-            stream_data = await get_streaming_links_gogoanime(anime_id)
+            # Try to get streaming links from Zoro
+            stream_data = await get_streaming_links_zoro(anime_id)
             
             if not stream_data or not stream_data.get("sources"):
                 await query.edit_message_text(
