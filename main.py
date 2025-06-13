@@ -87,49 +87,19 @@ async def search_zoro(query: str) -> Optional[Dict]:
         logger.error(f"Error searching Zoro: {e}")
         return None
 
-async def get_streaming_links_zoro(anime_id: str) -> Optional[Dict]:
-    """Get streaming links from Zoro API"""
+async def get_anime_episodes(anime_id: str) -> Optional[Dict]:
+    """Get anime episodes from Zoro API"""
     try:
-        # First get the anime details from Jikan to get the title
-        anime_details = await get_anime_details_jikan(int(anime_id))
-        if not anime_details:
-            return None
-            
-        title = anime_details['data']['title']
-        logger.info(f"Searching Zoro for title: {title}")
-        
-        # Search for the anime on Zoro
-        search_results = await search_zoro(title)
-        if not search_results or not search_results.get("results"):
-            logger.error(f"No results found on Zoro for: {title}")
-            return None
-            
-        # Get the first result's ID
-        first_result = search_results["results"][0]
-        episode_id = first_result.get("id")
-        if not episode_id:
-            logger.error("No episode ID found in search results")
-            return None
-            
-        logger.info(f"Found episode ID: {episode_id}")
-        
-        # Get streaming links using vidcloud server
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{ZORO_API_BASE}/watch",
-                params={
-                    "episodeId": episode_id,
-                    "server": "vidcloud"
-                }
-            ) as response:
+            async with session.get(f"{ZORO_API_BASE}/info/{anime_id}") as response:
                 if response.status == 200:
                     data = await response.json()
-                    logger.info(f"Got streaming data: {data}")
+                    logger.info(f"Got anime info: {data}")
                     return data
-                logger.error(f"Failed to get streaming links with status: {response.status}")
+                logger.error(f"Failed to get anime info with status: {response.status}")
                 return None
     except Exception as e:
-        logger.error(f"Error getting streaming links from Zoro: {e}")
+        logger.error(f"Error getting anime info: {e}")
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,32 +228,163 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif action == "watch":
             # Show loading message
-            await query.edit_message_text("🔍 Searching for streaming links...", parse_mode='Markdown')
+            await query.edit_message_text("🔍 Searching for episodes...", parse_mode='Markdown')
             
-            # Try to get streaming links from Zoro
-            stream_data = await get_streaming_links_zoro(anime_id)
-            
-            if not stream_data or not stream_data.get("sources"):
+            # First get the anime details from Jikan to get the title
+            anime_details = await get_anime_details_jikan(int(anime_id))
+            if not anime_details:
                 await query.edit_message_text(
-                    "❌ Sorry, streaming is not available at the moment. Please try again later.",
-                    parse_mode='Markdown'
-                )
-                return
-            
-            # Get the first available source
-            sources = stream_data["sources"]
-            if not sources:
-                await query.edit_message_text(
-                    "❌ No streaming sources found. Please try again later.",
+                    "❌ Error getting anime details. Please try again.",
                     parse_mode='Markdown'
                 )
                 return
                 
-            video_url = sources[0]["url"]
-            player_url = f"https://animep.onrender.com/watch?src={urllib.parse.quote(video_url)}"
+            title = anime_details['data']['title']
+            logger.info(f"Searching Zoro for title: {title}")
+            
+            # Search for the anime on Zoro
+            search_results = await search_zoro(title)
+            if not search_results or not search_results.get("results"):
+                await query.edit_message_text(
+                    "❌ No results found. Please try again later.",
+                    parse_mode='Markdown'
+                )
+                return
+                
+            # Get the first result's ID
+            first_result = search_results["results"][0]
+            zoro_id = first_result.get("id")
+            if not zoro_id:
+                await query.edit_message_text(
+                    "❌ No episode ID found. Please try again later.",
+                    parse_mode='Markdown'
+                )
+                return
+                
+            logger.info(f"Found Zoro ID: {zoro_id}")
+            
+            # Get anime info with episodes
+            anime_info = await get_anime_episodes(zoro_id)
+            if not anime_info or not anime_info.get("episodes"):
+                await query.edit_message_text(
+                    "❌ No episodes found. Please try again later.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Create episode selection buttons
+            episodes = anime_info["episodes"]
+            keyboard = []
+            current_row = []
+            
+            for idx, episode in enumerate(episodes[:10], 1):  # Show first 10 episodes
+                current_row.append(
+                    InlineKeyboardButton(
+                        f"EP {idx}",
+                        callback_data=f"episode_{zoro_id}_{episode['id']}"
+                    )
+                )
+                if len(current_row) == 3:  # 3 episodes per row
+                    keyboard.append(current_row)
+                    current_row = []
+            
+            if current_row:  # Add remaining episodes
+                keyboard.append(current_row)
+            
+            # Add a "More Episodes" button if there are more than 10
+            if len(episodes) > 10:
+                keyboard.append([InlineKeyboardButton("More Episodes ▶️", callback_data=f"more_episodes_{zoro_id}_10")])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.edit_message_text(
-                f"▶️ Click the link below to watch:\n{player_url}",
+                f"🎬 *{anime_info['title']}*\n\n"
+                f"Select an episode to watch:",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            
+        elif action == "episode":
+            # Show loading message
+            await query.edit_message_text("🔍 Getting streaming link...", parse_mode='Markdown')
+            
+            # Get streaming links using vidcloud server
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{ZORO_API_BASE}/watch",
+                    params={
+                        "episodeId": query.data.split('_')[2],
+                        "server": "vidcloud"
+                    }
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data and data.get("sources"):
+                            video_url = data["sources"][0]["url"]
+                            player_url = f"https://animep.onrender.com/watch?src={urllib.parse.quote(video_url)}"
+                            
+                            await query.edit_message_text(
+                                f"▶️ Click the link below to watch:\n{player_url}",
+                                parse_mode='Markdown'
+                            )
+                            return
+                    
+                    await query.edit_message_text(
+                        "❌ Sorry, streaming is not available at the moment. Please try again later.",
+                        parse_mode='Markdown'
+                    )
+            
+        elif action == "more_episodes":
+            # Handle "More Episodes" button
+            zoro_id = query.data.split('_')[2]
+            start_idx = int(query.data.split('_')[3])
+            
+            # Get anime info with episodes
+            anime_info = await get_anime_episodes(zoro_id)
+            if not anime_info or not anime_info.get("episodes"):
+                await query.edit_message_text(
+                    "❌ No more episodes found.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            episodes = anime_info["episodes"]
+            keyboard = []
+            current_row = []
+            
+            for idx, episode in enumerate(episodes[start_idx:start_idx + 10], start_idx + 1):
+                current_row.append(
+                    InlineKeyboardButton(
+                        f"EP {idx}",
+                        callback_data=f"episode_{zoro_id}_{episode['id']}"
+                    )
+                )
+                if len(current_row) == 3:  # 3 episodes per row
+                    keyboard.append(current_row)
+                    current_row = []
+            
+            if current_row:  # Add remaining episodes
+                keyboard.append(current_row)
+            
+            # Add navigation buttons
+            nav_buttons = []
+            if start_idx > 0:
+                nav_buttons.append(
+                    InlineKeyboardButton("◀️ Previous", callback_data=f"more_episodes_{zoro_id}_{start_idx - 10}")
+                )
+            if start_idx + 10 < len(episodes):
+                nav_buttons.append(
+                    InlineKeyboardButton("Next ▶️", callback_data=f"more_episodes_{zoro_id}_{start_idx + 10}")
+                )
+            if nav_buttons:
+                keyboard.append(nav_buttons)
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                f"🎬 *{anime_info['title']}*\n\n"
+                f"Select an episode to watch:",
+                reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
             
