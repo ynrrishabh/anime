@@ -2,7 +2,7 @@ import os, requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-BOT_TOKEN = os.getenv("8019727601:AAG78lFk_UT5mAi2Mi2Y9E9XiHD-KkRBJx4")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎬 Send /anime <name> to watch an anime!")
