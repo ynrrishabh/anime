@@ -1,21 +1,27 @@
 import os, requests, asyncio
+from fastapi import FastAPI
+import uvicorn
+
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
+    ApplicationBuilder, CommandHandler, ContextTypes
 )
 
-# Load environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Example: https://your-bot.onrender.com
-PORT = int(os.getenv("PORT", 10000))    # Default to 10000 if not set
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 10000))
 
-# /start command
+# === FastAPI app just to bind the port ===
+fastapi_app = FastAPI()
+
+@fastapi_app.get("/")
+def root():
+    return {"status": "Bot is running!"}
+
+# === Telegram Bot ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🎬 Send /anime <name> to watch an anime!")
 
-# /anime command
 async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❗ Usage: /anime naruto")
@@ -23,7 +29,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = " ".join(context.args)
     search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{query}"
-    
+
     try:
         res = requests.get(search_url).json()
         anime_id = res[0]["id"]
@@ -42,23 +48,19 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Anime not found or API error.")
         print(f"Error: {e}")
 
-# Start the bot with webhook
+# === Main startup ===
+async def start_bot():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("anime", anime))
+
+    await app.initialize()
+    await app.bot.set_webhook(url=WEBHOOK_URL)
+    await app.start()
+    print("✅ Webhook set and bot started!")
+
+# Start both FastAPI + Telegram bot
 if __name__ == "__main__":
-    async def main():
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("anime", anime))
-
-        await app.initialize()
-        await app.bot.set_webhook(url=WEBHOOK_URL)
-        await app.start()
-        await app.updater.start_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path="",
-            webhook_url=WEBHOOK_URL
-        )
-        print(f"🚀 Bot running on port {PORT} with webhook set to {WEBHOOK_URL}")
-        await app.updater.idle()
-
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_bot())
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=PORT)
