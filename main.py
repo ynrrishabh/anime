@@ -159,7 +159,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /anime command"""
     try:
         if not context.args:
-            await update.message.reply_text(s
+            await update.message.reply_text(
                 "❗ Usage: /anime <name>\nExample: /anime naruto",
                 parse_mode='Markdown'
             )
