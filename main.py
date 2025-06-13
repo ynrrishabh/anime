@@ -2,6 +2,7 @@ import os
 import requests
 import asyncio
 import logging
+import urllib.parse
 from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -49,16 +50,9 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send "searching..." message
         searching_msg = await update.message.reply_text("🔍 Searching for anime...")
         
-        # Search for anime (using URL encoding for better compatibility)
-        import urllib.parse
-        encoded_query = urllib.parse.quote(query)
-        search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{encoded_query}"
-        
-        # Search for anime (trying multiple endpoint formats)
-        import urllib.parse
+        # Search for anime using multiple endpoint formats
         encoded_query = urllib.parse.quote(query)
         
-        # Try different API endpoint formats
         endpoints_to_try = [
             f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{encoded_query}",
             f"https://consumet-api-0kir.onrender.com/anime/gogoanime?query={encoded_query}",
@@ -73,23 +67,20 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = requests.get(search_url, timeout=15)
                 logger.info(f"Trying URL: {search_url}")
                 logger.info(f"API Response Status: {response.status_code}")
-                logger.info(f"API Response Content: {response.text[:500]}...")
                 
                 if response.status_code != 200:
                     continue
                     
                 res = response.json()
-                logger.info(f"Parsed JSON structure: {type(res)} - {list(res.keys()) if isinstance(res, dict) else f'Length: {len(res) if isinstance(res, list) else 'Not list/dict'}'}")
+                logger.info(f"Response type: {type(res)}")
                 
-                # Check if this response contains anime data
+                # Skip documentation responses
                 if isinstance(res, dict) and ('intro' in res and 'routes' in res):
-                    # This is the documentation response, try next endpoint
                     logger.info("Got documentation response, trying next endpoint...")
                     continue
                 
                 # Handle different response formats
                 if isinstance(res, dict):
-                    # If it's a dict, check for results key
                     if 'results' in res:
                         anime_list = res['results']
                         working_url = search_url
@@ -99,7 +90,6 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         working_url = search_url
                         break
                 elif isinstance(res, list) and len(res) > 0:
-                    # Check if first item looks like anime data
                     if isinstance(res[0], dict) and 'id' in res[0] and 'title' in res[0]:
                         anime_list = res
                         working_url = search_url
@@ -109,28 +99,24 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error with endpoint {search_url}: {e}")
                 continue
         
-        if not anime_list:
-            await searching_msg.edit_text("❌ All API endpoints failed or returned no results. The API might be down.")
+        if not anime_list or len(anime_list) == 0:
+            await searching_msg.edit_text("❌ No anime found or API is down.")
             return
         
-        if len(anime_list) == 0:
-            await searching_msg.edit_text("❌ No anime found with that name.")
-            return
-            
         logger.info(f"Successfully got anime list from: {working_url}")
         anime_id = anime_list[0]["id"]
         title = anime_list[0]["title"]
         
         # Update message
         await searching_msg.edit_text("📺 Found anime! Getting episode info...")
-            
-            # Fetch episode info
+        
+        # Fetch episode info
+        try:
             ep_response = requests.get(
                 f"https://consumet-api-0kir.onrender.com/anime/gogoanime/info/{anime_id}", 
                 timeout=15
             )
             logger.info(f"Episode API Response Status: {ep_response.status_code}")
-            logger.info(f"Episode API Response: {ep_response.text[:300]}...")
             
             ep_data = ep_response.json()
             
@@ -159,7 +145,6 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout=15
             )
             logger.info(f"Stream API Response Status: {stream_response.status_code}")
-            logger.info(f"Stream API Response: {stream_response.text[:300]}...")
             
             stream_data = stream_response.json()
             
@@ -194,7 +179,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"KeyError: {e}")
         except Exception as e:
             await searching_msg.edit_text("❌ An error occurred. Please try again later.")
-            logger.error(f"Unexpected error in anime command: {e}")
+            logger.error(f"Unexpected error: {e}")
             
     except Exception as e:
         logger.error(f"Error in anime command handler: {e}")
@@ -284,26 +269,6 @@ async def health_check():
         return {"status": "healthy", "bot_running": True}
     else:
         return {"status": "unhealthy", "bot_running": False}
-
-@fastapi_app.get("/webhook-info")
-async def webhook_info():
-    """Get current webhook information"""
-    if telegram_app and telegram_app.running:
-        try:
-            webhook_info = await telegram_app.bot.get_webhook_info()
-            return {
-                "url": webhook_info.url,
-                "has_custom_certificate": webhook_info.has_custom_certificate,
-                "pending_update_count": webhook_info.pending_update_count,
-                "last_error_date": webhook_info.last_error_date,
-                "last_error_message": webhook_info.last_error_message,
-                "max_connections": webhook_info.max_connections,
-                "allowed_updates": webhook_info.allowed_updates
-            }
-        except Exception as e:
-            return {"error": str(e)}
-    else:
-        return {"error": "Bot not initialized"}
 
 # Startup event
 @fastapi_app.on_event("startup")
