@@ -21,8 +21,38 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # API URLs
-JIKAN_API_BASE = "https://api.jikan.moe/v4"
-GOGOANIME_API_BASE = "https://consumet-api-0kir.onrender.com/anime/gogoanime"
+ANILIST_API = "https://graphql.anilist.co"
+GOGOANIME_API_BASE = "https://api.consumet.org/anime/gogoanime"
+
+# GraphQL query for AniList
+ANILIST_QUERY = """
+query ($search: String) {
+  Page(page: 1, perPage: 5) {
+    media(search: $search, type: ANIME) {
+      id
+      title {
+        romaji
+        english
+      }
+      coverImage {
+        large
+      }
+      description
+      averageScore
+      status
+      genres
+      episodes
+      duration
+      format
+      startDate {
+        year
+        month
+        day
+      }
+    }
+  }
+}
+"""
 
 # Validate environment variables
 if not BOT_TOKEN:
@@ -34,83 +64,108 @@ if not WEBHOOK_URL:
 telegram_app = None
 fastapi_app = FastAPI()
 
-async def search_anime_jikan(query: str) -> Optional[List[Dict]]:
-    """Search anime using Jikan API"""
+async def search_anime_anilist(query: str) -> Optional[List[Dict]]:
+    """Search anime using AniList API"""
     try:
         async with aiohttp.ClientSession() as session:
-            # Add delay to respect rate limits
-            await asyncio.sleep(1)
-            async with session.get(
-                f"{JIKAN_API_BASE}/anime",
-                params={
-                    "q": query,
-                    "sfw": "true",  # Convert boolean to string
-                    "limit": 5  # Limit results to 5
+            async with session.post(
+                ANILIST_API,
+                json={
+                    "query": ANILIST_QUERY,
+                    "variables": {"search": query}
                 }
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    if data.get("data"):
-                        return data["data"]
-                    logger.error("No data found in Jikan API response")
-                    return None
-                logger.error(f"Jikan API error: {response.status}")
+                    return data.get("data", {}).get("Page", {}).get("media", [])
+                logger.error(f"AniList API error: {response.status}")
                 return None
     except Exception as e:
-        logger.error(f"Error searching Jikan API: {e}")
+        logger.error(f"Error searching AniList API: {e}")
         return None
 
-async def get_anime_details_jikan(anime_id: int) -> Optional[Dict]:
-    """Get detailed anime information from Jikan API"""
+async def get_anime_details_anilist(anime_id: int) -> Optional[Dict]:
+    """Get detailed anime information from AniList API"""
     try:
+        query = """
+        query ($id: Int) {
+          Media(id: $id, type: ANIME) {
+            id
+            title {
+              romaji
+              english
+            }
+            description
+            coverImage {
+              large
+            }
+            bannerImage
+            averageScore
+            status
+            genres
+            episodes
+            duration
+            format
+            startDate {
+              year
+              month
+              day
+            }
+            endDate {
+              year
+              month
+              day
+            }
+            studios {
+              nodes {
+                name
+              }
+            }
+          }
+        }
+        """
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{JIKAN_API_BASE}/anime/{anime_id}/full") as response:
+            async with session.post(
+                ANILIST_API,
+                json={
+                    "query": query,
+                    "variables": {"id": anime_id}
+                }
+            ) as response:
                 if response.status == 200:
-                    return await response.json()
+                    data = await response.json()
+                    return data.get("data", {}).get("Media")
                 return None
     except Exception as e:
-        logger.error(f"Error getting anime details from Jikan: {e}")
+        logger.error(f"Error getting anime details from AniList: {e}")
         return None
 
-async def search_gogoanime(query: str) -> Optional[Dict]:
-    """Search anime on Gogoanime"""
+async def get_streaming_links_gogoanime(title: str) -> Optional[Dict]:
+    """Get streaming links from Gogoanime API"""
     try:
+        # Search for the anime on Gogoanime
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{GOGOANIME_API_BASE}/search",
-                params={"query": query}
+                params={"query": title}
             ) as response:
                 if response.status == 200:
-                    return await response.json()
-                return None
-    except Exception as e:
-        logger.error(f"Error searching Gogoanime: {e}")
-        return None
-
-async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
-    """Get streaming links from Gogoanime API"""
-    try:
-        # First get the anime details from Jikan to get the title
-        anime_details = await get_anime_details_jikan(int(anime_id))
-        if not anime_details:
-            return None
-            
-        title = anime_details['data']['title']
-        
-        # Search for the anime on Gogoanime
-        search_results = await search_gogoanime(title)
-        if not search_results or not search_results.get("results"):
-            logger.error(f"No results found on Gogoanime for: {title}")
-            return None
-            
-        # Get the first result's ID
-        gogo_id = search_results["results"][0]["id"]
-        
-        # Now get the streaming links
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"{GOGOANIME_API_BASE}/watch/{gogo_id}") as response:
-                if response.status == 200:
-                    return await response.json()
+                    search_data = await response.json()
+                    if not search_data.get("results"):
+                        logger.error(f"No results found on Gogoanime for: {title}")
+                        return None
+                    
+                    # Get the first result's ID
+                    gogo_id = search_data["results"][0]["id"]
+                    logger.info(f"Found Gogoanime ID: {gogo_id}")
+                    
+                    # Get streaming links
+                    async with session.get(f"{GOGOANIME_API_BASE}/watch/{gogo_id}") as watch_response:
+                        if watch_response.status == 200:
+                            return await watch_response.json()
+                        logger.error(f"Failed to get streaming links with status: {watch_response.status}")
+                        return None
+                logger.error(f"Gogoanime search failed with status: {response.status}")
                 return None
     except Exception as e:
         logger.error(f"Error getting streaming links from Gogoanime: {e}")
@@ -143,7 +198,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "*How to use:*\n"
             "1. Use /anime followed by the anime name\n"
             "2. Select from the search results\n"
-            "3. Click 'Watch' to get the streaming link\n"
+            "3. Click 'Watch' to get the video\n"
             "4. Click 'More Info' for detailed information\n\n"
             "*Example:*\n"
             "/anime naruto\n"
@@ -171,8 +226,8 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send "searching..." message
         searching_msg = await update.message.reply_text("🔍 Searching for anime...")
         
-        # Search using Jikan API
-        anime_list = await search_anime_jikan(query)
+        # Search using AniList API
+        anime_list = await search_anime_anilist(query)
         
         if not anime_list or len(anime_list) == 0:
             await searching_msg.edit_text(
@@ -189,11 +244,13 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         
         for idx, anime in enumerate(anime_list[:5], 1):
-            title = anime["title"]
-            year = anime.get("year", "N/A")
-            score = anime.get("score", "N/A")
+            title = anime["title"]["english"] or anime["title"]["romaji"]
+            score = anime.get("averageScore", "N/A")
+            if score != "N/A":
+                score = f"{score/10:.1f}"
+            year = anime.get("startDate", {}).get("year", "N/A")
             results_text += f"{idx}. *{title}* ({year}) - ⭐ {score}\n"
-            keyboard.append([InlineKeyboardButton(f"Select {title[:20]}...", callback_data=f"select_{anime['mal_id']}")])
+            keyboard.append([InlineKeyboardButton(f"Select {title[:20]}...", callback_data=f"select_{anime['id']}")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await searching_msg.edit_text(results_text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -212,7 +269,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if action == "select":
             # Get detailed information
-            details = await get_anime_details_jikan(int(anime_id))
+            details = await get_anime_details_anilist(int(anime_id))
             
             if not details:
                 await query.edit_message_text(
@@ -221,12 +278,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             
+            title = details["title"]["english"] or details["title"]["romaji"]
+            description = details.get("description", "No description available.")
+            score = details.get("averageScore", "N/A")
+            if score != "N/A":
+                score = f"{score/10:.1f}"
+            
             info_text = (
-                f"🎬 *{details['data']['title']}*\n\n"
-                f"📝 *Synopsis:*\n{details['data']['synopsis'][:300]}...\n\n"
-                f"⭐ *Score:* {details['data']['score']}\n"
-                f"📊 *Status:* {details['data']['status']}\n"
-                f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n\n"
+                f"🎬 *{title}*\n\n"
+                f"📝 *Synopsis:*\n{description[:300]}...\n\n"
+                f"⭐ *Score:* {score}\n"
+                f"📊 *Status:* {details['status']}\n"
+                f"🎭 *Genres:* {', '.join(details['genres'])}\n\n"
                 f"Would you like to watch this anime?"
             )
             
@@ -244,8 +307,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Show loading message
             await query.edit_message_text("🔍 Searching for streaming links...", parse_mode='Markdown')
             
+            # Get anime details to get the title
+            details = await get_anime_details_anilist(int(anime_id))
+            if not details:
+                await query.edit_message_text(
+                    "❌ Error getting anime details. Please try again.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            title = details["title"]["english"] or details["title"]["romaji"]
+            
             # Try to get streaming links from Gogoanime
-            stream_data = await get_streaming_links_gogoanime(anime_id)
+            stream_data = await get_streaming_links_gogoanime(title)
             
             if not stream_data or not stream_data.get("sources"):
                 await query.edit_message_text(
@@ -264,16 +338,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
                 
             video_url = sources[0]["url"]
-            player_url = f"https://animep.onrender.com/watch?src={urllib.parse.quote(video_url)}"
             
-            await query.edit_message_text(
-                f"▶️ Click the link below to watch:\n{player_url}",
-                parse_mode='Markdown'
+            # Send video directly to Telegram
+            await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=video_url,
+                caption=f"🎬 Here's your anime episode!\n\nClick the video to play directly in Telegram."
             )
+            
+            # Delete the previous message
+            await query.message.delete()
             
         elif action == "info":
             # Get more detailed information
-            details = await get_anime_details_jikan(int(anime_id))
+            details = await get_anime_details_anilist(int(anime_id))
             
             if not details:
                 await query.edit_message_text(
@@ -282,16 +360,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
             
+            title = details["title"]["english"] or details["title"]["romaji"]
+            description = details.get("description", "No description available.")
+            score = details.get("averageScore", "N/A")
+            if score != "N/A":
+                score = f"{score/10:.1f}"
+            
+            start_date = details.get("startDate", {})
+            end_date = details.get("endDate", {})
+            aired = f"{start_date.get('year', '?')}"
+            if end_date.get("year"):
+                aired += f" - {end_date.get('year')}"
+            
+            studios = [studio["name"] for studio in details.get("studios", {}).get("nodes", [])]
+            
             info_text = (
-                f"🎬 *{details['data']['title']}*\n\n"
-                f"📝 *Full Synopsis:*\n{details['data']['synopsis']}\n\n"
-                f"⭐ *Score:* {details['data']['score']}\n"
-                f"📊 *Status:* {details['data']['status']}\n"
-                f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n"
-                f"📅 *Aired:* {details['data']['aired']['string']}\n"
-                f"📺 *Episodes:* {details['data']['episodes']}\n"
-                f"⏱️ *Duration:* {details['data']['duration']}\n"
-                f"📌 *Rating:* {details['data']['rating']}\n"
+                f"🎬 *{title}*\n\n"
+                f"📝 *Full Synopsis:*\n{description}\n\n"
+                f"⭐ *Score:* {score}\n"
+                f"📊 *Status:* {details['status']}\n"
+                f"🎭 *Genres:* {', '.join(details['genres'])}\n"
+                f"📅 *Aired:* {aired}\n"
+                f"📺 *Episodes:* {details.get('episodes', 'N/A')}\n"
+                f"⏱️ *Duration:* {details.get('duration', 'N/A')} min\n"
+                f"🎨 *Format:* {details.get('format', 'N/A')}\n"
+                f"🎬 *Studios:* {', '.join(studios) if studios else 'N/A'}\n"
             )
             
             keyboard = [[InlineKeyboardButton("▶️ Watch", callback_data=f"watch_{anime_id}")]]
