@@ -53,44 +53,93 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{query}"
         
         try:
-            res = requests.get(search_url, timeout=15).json()
+            response = requests.get(search_url, timeout=15)
+            logger.info(f"API Response Status: {response.status_code}")
+            logger.info(f"API Response Content: {response.text[:500]}...")  # Log first 500 chars
             
-            if not res or len(res) == 0:
+            res = response.json()
+            logger.info(f"Parsed JSON structure: {type(res)} - {list(res.keys()) if isinstance(res, dict) else f'Length: {len(res) if isinstance(res, list) else 'Not list/dict'}'}")
+            
+            # Handle different response formats
+            if isinstance(res, dict):
+                # If it's a dict, check for results key
+                if 'results' in res:
+                    anime_list = res['results']
+                elif 'data' in res:
+                    anime_list = res['data']
+                else:
+                    await searching_msg.edit_text(f"❌ Unexpected API response format. Response keys: {list(res.keys())}")
+                    return
+            elif isinstance(res, list):
+                anime_list = res
+            else:
+                await searching_msg.edit_text("❌ API returned invalid format.")
+                return
+            
+            if not anime_list or len(anime_list) == 0:
                 await searching_msg.edit_text("❌ No anime found with that name.")
                 return
                 
-            anime_id = res[0]["id"]
-            title = res[0]["title"]
+            anime_id = anime_list[0]["id"]
+            title = anime_list[0]["title"]
             
             # Update message
             await searching_msg.edit_text("📺 Found anime! Getting episode info...")
             
             # Fetch episode info
-            ep_data = requests.get(
+            ep_response = requests.get(
                 f"https://consumet-api-0kir.onrender.com/anime/gogoanime/info/{anime_id}", 
                 timeout=15
-            ).json()
+            )
+            logger.info(f"Episode API Response Status: {ep_response.status_code}")
+            logger.info(f"Episode API Response: {ep_response.text[:300]}...")
             
-            if not ep_data.get("episodes") or len(ep_data["episodes"]) == 0:
+            ep_data = ep_response.json()
+            
+            # Handle different episode data formats
+            episodes = None
+            if isinstance(ep_data, dict):
+                if 'episodes' in ep_data:
+                    episodes = ep_data['episodes']
+                elif 'data' in ep_data and isinstance(ep_data['data'], dict) and 'episodes' in ep_data['data']:
+                    episodes = ep_data['data']['episodes']
+                elif 'episodesList' in ep_data:
+                    episodes = ep_data['episodesList']
+            
+            if not episodes or len(episodes) == 0:
                 await searching_msg.edit_text("❌ No episodes found for this anime.")
                 return
                 
-            first_ep_id = ep_data["episodes"][0]["id"]
+            first_ep_id = episodes[0]["id"]
             
             # Update message
             await searching_msg.edit_text("🎮 Getting stream link...")
             
             # Get stream source
-            stream_data = requests.get(
+            stream_response = requests.get(
                 f"https://consumet-api-0kir.onrender.com/anime/gogoanime/watch/{first_ep_id}",
                 timeout=15
-            ).json()
+            )
+            logger.info(f"Stream API Response Status: {stream_response.status_code}")
+            logger.info(f"Stream API Response: {stream_response.text[:300]}...")
             
-            if not stream_data.get("sources") or len(stream_data["sources"]) == 0:
+            stream_data = stream_response.json()
+            
+            # Handle different stream data formats
+            sources = None
+            if isinstance(stream_data, dict):
+                if 'sources' in stream_data:
+                    sources = stream_data['sources']
+                elif 'data' in stream_data and isinstance(stream_data['data'], dict) and 'sources' in stream_data['data']:
+                    sources = stream_data['data']['sources']
+                elif 'streamingLinks' in stream_data:
+                    sources = stream_data['streamingLinks']
+            
+            if not sources or len(sources) == 0:
                 await searching_msg.edit_text("❌ No stream source found for this episode.")
                 return
                 
-            video_url = stream_data["sources"][0]["url"]
+            video_url = sources[0]["url"]
             player_url = f"https://animep.onrender.com/watch?src={video_url}"
             
             await searching_msg.edit_text(f"▶️ {title} - Episode 1\n🔗 {player_url}")
