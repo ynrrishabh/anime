@@ -50,7 +50,10 @@ async def search_anime_jikan(query: str) -> Optional[List[Dict]]:
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return data.get("data", [])
+                    if data.get("data"):
+                        return data["data"]
+                    logger.error("No data found in Jikan API response")
+                    return None
                 logger.error(f"Jikan API error: {response.status}")
                 return None
     except Exception as e:
