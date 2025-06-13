@@ -49,39 +49,77 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send "searching..." message
         searching_msg = await update.message.reply_text("🔍 Searching for anime...")
         
-        # Search for anime (fixed URL format)
-        search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime?query={query}"
+        # Search for anime (using URL encoding for better compatibility)
+        import urllib.parse
+        encoded_query = urllib.parse.quote(query)
+        search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{encoded_query}"
         
-        try:
-            response = requests.get(search_url, timeout=15)
-            logger.info(f"API Response Status: {response.status_code}")
-            logger.info(f"API Response Content: {response.text[:500]}...")  # Log first 500 chars
-            
-            res = response.json()
-            logger.info(f"Parsed JSON structure: {type(res)} - {list(res.keys()) if isinstance(res, dict) else f'Length: {len(res) if isinstance(res, list) else 'Not list/dict'}'}")
-            
-            # Handle different response formats
-            if isinstance(res, dict):
-                # If it's a dict, check for results key
-                if 'results' in res:
-                    anime_list = res['results']
-                elif 'data' in res:
-                    anime_list = res['data']
-                else:
-                    await searching_msg.edit_text(f"❌ Unexpected API response format. Response keys: {list(res.keys())}")
-                    return
-            elif isinstance(res, list):
-                anime_list = res
-            else:
-                await searching_msg.edit_text("❌ API returned invalid format.")
-                return
-            
-            if not anime_list or len(anime_list) == 0:
-                await searching_msg.edit_text("❌ No anime found with that name.")
-                return
+        # Search for anime (trying multiple endpoint formats)
+        import urllib.parse
+        encoded_query = urllib.parse.quote(query)
+        
+        # Try different API endpoint formats
+        endpoints_to_try = [
+            f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{encoded_query}",
+            f"https://consumet-api-0kir.onrender.com/anime/gogoanime?query={encoded_query}",
+            f"https://consumet-api-0kir.onrender.com/anime/gogoanime/search?query={encoded_query}",
+        ]
+        
+        anime_list = None
+        working_url = None
+        
+        for search_url in endpoints_to_try:
+            try:
+                response = requests.get(search_url, timeout=15)
+                logger.info(f"Trying URL: {search_url}")
+                logger.info(f"API Response Status: {response.status_code}")
+                logger.info(f"API Response Content: {response.text[:500]}...")
                 
-            anime_id = anime_list[0]["id"]
-            title = anime_list[0]["title"]
+                if response.status_code != 200:
+                    continue
+                    
+                res = response.json()
+                logger.info(f"Parsed JSON structure: {type(res)} - {list(res.keys()) if isinstance(res, dict) else f'Length: {len(res) if isinstance(res, list) else 'Not list/dict'}'}")
+                
+                # Check if this response contains anime data
+                if isinstance(res, dict) and ('intro' in res and 'routes' in res):
+                    # This is the documentation response, try next endpoint
+                    logger.info("Got documentation response, trying next endpoint...")
+                    continue
+                
+                # Handle different response formats
+                if isinstance(res, dict):
+                    # If it's a dict, check for results key
+                    if 'results' in res:
+                        anime_list = res['results']
+                        working_url = search_url
+                        break
+                    elif 'data' in res:
+                        anime_list = res['data']
+                        working_url = search_url
+                        break
+                elif isinstance(res, list) and len(res) > 0:
+                    # Check if first item looks like anime data
+                    if isinstance(res[0], dict) and 'id' in res[0] and 'title' in res[0]:
+                        anime_list = res
+                        working_url = search_url
+                        break
+                        
+            except Exception as e:
+                logger.error(f"Error with endpoint {search_url}: {e}")
+                continue
+        
+        if not anime_list:
+            await searching_msg.edit_text("❌ All API endpoints failed or returned no results. The API might be down.")
+            return
+        
+        if len(anime_list) == 0:
+            await searching_msg.edit_text("❌ No anime found with that name.")
+            return
+            
+        logger.info(f"Successfully got anime list from: {working_url}")
+        anime_id = anime_list[0]["id"]
+        title = anime_list[0]["title"]
             
             # Update message
             await searching_msg.edit_text("📺 Found anime! Getting episode info...")
