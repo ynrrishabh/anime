@@ -4,8 +4,10 @@ import asyncio
 import logging
 import urllib.parse
 from fastapi import FastAPI, Request, HTTPException
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+import aiohttp
+from typing import Optional, Dict, List
 
 # Configure logging
 logging.basicConfig(
@@ -18,6 +20,10 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
+# API URLs
+JIKAN_API_BASE = "https://api.jikan.moe/v4"
+GOGOANIME_API_BASE = "https://consumet-api-0kir.onrender.com/anime/gogoanime"
+
 # Validate environment variables
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required")
@@ -28,11 +34,54 @@ if not WEBHOOK_URL:
 telegram_app = None
 fastapi_app = FastAPI()
 
-# Telegram command handlers
+async def search_anime_jikan(query: str) -> Optional[List[Dict]]:
+    """Search anime using Jikan API"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{JIKAN_API_BASE}/anime", params={"q": query, "sfw": True}) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("data", [])
+                return None
+    except Exception as e:
+        logger.error(f"Error searching Jikan API: {e}")
+        return None
+
+async def get_anime_details_jikan(anime_id: int) -> Optional[Dict]:
+    """Get detailed anime information from Jikan API"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{JIKAN_API_BASE}/anime/{anime_id}/full") as response:
+                if response.status == 200:
+                    return await response.json()
+                return None
+    except Exception as e:
+        logger.error(f"Error getting anime details from Jikan: {e}")
+        return None
+
+async def get_streaming_links_gogoanime(anime_id: str) -> Optional[Dict]:
+    """Get streaming links from Gogoanime API"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{GOGOANIME_API_BASE}/watch/{anime_id}") as response:
+                if response.status == 200:
+                    return await response.json()
+                return None
+    except Exception as e:
+        logger.error(f"Error getting streaming links from Gogoanime: {e}")
+        return None
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     try:
-        await update.message.reply_text("🎬 Send /anime <name> to watch an anime!")
+        welcome_text = (
+            "🎬 Welcome to the Anime Bot!\n\n"
+            "Commands:\n"
+            "/anime <name> - Search for an anime\n"
+            "/help - Show this help message\n\n"
+            "Example: /anime naruto"
+        )
+        await update.message.reply_text(welcome_text)
         logger.info(f"Start command sent to user {update.effective_user.id}")
     except Exception as e:
         logger.error(f"Error in start command: {e}")
@@ -50,139 +99,111 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send "searching..." message
         searching_msg = await update.message.reply_text("🔍 Searching for anime...")
         
-        # Search for anime using multiple endpoint formats
-        encoded_query = urllib.parse.quote(query)
-        
-        endpoints_to_try = [
-            f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{encoded_query}",
-            f"https://consumet-api-0kir.onrender.com/anime/gogoanime?query={encoded_query}",
-            f"https://consumet-api-0kir.onrender.com/anime/gogoanime/search?query={encoded_query}",
-        ]
-        
-        anime_list = None
-        working_url = None
-        
-        for search_url in endpoints_to_try:
-            try:
-                response = requests.get(search_url, timeout=15)
-                logger.info(f"Trying URL: {search_url}")
-                logger.info(f"API Response Status: {response.status_code}")
-                
-                if response.status_code != 200:
-                    continue
-                    
-                res = response.json()
-                logger.info(f"Response type: {type(res)}")
-                
-                # Skip documentation responses
-                if isinstance(res, dict) and ('intro' in res and 'routes' in res):
-                    logger.info("Got documentation response, trying next endpoint...")
-                    continue
-                
-                # Handle different response formats
-                if isinstance(res, dict):
-                    if 'results' in res:
-                        anime_list = res['results']
-                        working_url = search_url
-                        break
-                    elif 'data' in res:
-                        anime_list = res['data']
-                        working_url = search_url
-                        break
-                elif isinstance(res, list) and len(res) > 0:
-                    if isinstance(res[0], dict) and 'id' in res[0] and 'title' in res[0]:
-                        anime_list = res
-                        working_url = search_url
-                        break
-                        
-            except Exception as e:
-                logger.error(f"Error with endpoint {search_url}: {e}")
-                continue
+        # Search using Jikan API
+        anime_list = await search_anime_jikan(query)
         
         if not anime_list or len(anime_list) == 0:
-            await searching_msg.edit_text("❌ No anime found or API is down.")
+            await searching_msg.edit_text("❌ No anime found. Please try a different search term.")
             return
         
-        logger.info(f"Successfully got anime list from: {working_url}")
-        anime_id = anime_list[0]["id"]
-        title = anime_list[0]["title"]
+        # Get the first result
+        anime_data = anime_list[0]
+        anime_id = anime_data["mal_id"]
+        title = anime_data["title"]
         
-        # Update message
-        await searching_msg.edit_text("📺 Found anime! Getting episode info...")
+        # Get detailed information
+        details = await get_anime_details_jikan(anime_id)
         
-        # Fetch episode info
-        try:
-            ep_response = requests.get(
-                f"https://consumet-api-0kir.onrender.com/anime/gogoanime/info/{anime_id}", 
-                timeout=15
-            )
-            logger.info(f"Episode API Response Status: {ep_response.status_code}")
-            
-            ep_data = ep_response.json()
-            
-            # Handle different episode data formats
-            episodes = None
-            if isinstance(ep_data, dict):
-                if 'episodes' in ep_data:
-                    episodes = ep_data['episodes']
-                elif 'data' in ep_data and isinstance(ep_data['data'], dict) and 'episodes' in ep_data['data']:
-                    episodes = ep_data['data']['episodes']
-                elif 'episodesList' in ep_data:
-                    episodes = ep_data['episodesList']
-            
-            if not episodes or len(episodes) == 0:
-                await searching_msg.edit_text("❌ No episodes found for this anime.")
-                return
-                
-            first_ep_id = episodes[0]["id"]
-            
-            # Update message
-            await searching_msg.edit_text("🎮 Getting stream link...")
-            
-            # Get stream source
-            stream_response = requests.get(
-                f"https://consumet-api-0kir.onrender.com/anime/gogoanime/watch/{first_ep_id}",
-                timeout=15
-            )
-            logger.info(f"Stream API Response Status: {stream_response.status_code}")
-            
-            stream_data = stream_response.json()
-            
-            # Handle different stream data formats
-            sources = None
-            if isinstance(stream_data, dict):
-                if 'sources' in stream_data:
-                    sources = stream_data['sources']
-                elif 'data' in stream_data and isinstance(stream_data['data'], dict) and 'sources' in stream_data['data']:
-                    sources = stream_data['data']['sources']
-                elif 'streamingLinks' in stream_data:
-                    sources = stream_data['streamingLinks']
-            
-            if not sources or len(sources) == 0:
-                await searching_msg.edit_text("❌ No stream source found for this episode.")
-                return
-                
-            video_url = sources[0]["url"]
-            player_url = f"https://animep.onrender.com/watch?src={video_url}"
-            
-            await searching_msg.edit_text(f"▶️ {title} - Episode 1\n🔗 {player_url}")
-            logger.info(f"Successfully processed anime request: {title}")
-            
-        except requests.exceptions.Timeout:
-            await searching_msg.edit_text("❌ Request timeout. Please try again later.")
-            logger.error("API request timeout")
-        except requests.exceptions.RequestException as e:
-            await searching_msg.edit_text("❌ Network error occurred. Please try again later.")
-            logger.error(f"Network error: {e}")
-        except KeyError as e:
-            await searching_msg.edit_text("❌ Unexpected response format from API.")
-            logger.error(f"KeyError: {e}")
-        except Exception as e:
-            await searching_msg.edit_text("❌ An error occurred. Please try again later.")
-            logger.error(f"Unexpected error: {e}")
-            
+        if not details:
+            await searching_msg.edit_text("❌ Error getting anime details. Please try again.")
+            return
+        
+        # Create message with anime information
+        info_text = (
+            f"🎬 *{title}*\n\n"
+            f"📝 *Synopsis:*\n{details['data']['synopsis'][:300]}...\n\n"
+            f"⭐ *Score:* {details['data']['score']}\n"
+            f"📊 *Status:* {details['data']['status']}\n"
+            f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n\n"
+            f"Would you like to watch this anime?"
+        )
+        
+        # Create inline keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("▶️ Watch", callback_data=f"watch_{anime_id}"),
+                InlineKeyboardButton("ℹ️ More Info", callback_data=f"info_{anime_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await searching_msg.edit_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
+        
     except Exception as e:
         logger.error(f"Error in anime command handler: {e}")
+        await searching_msg.edit_text("❌ An error occurred. Please try again later.")
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        action, anime_id = query.data.split('_')
+        
+        if action == "watch":
+            # Try to get streaming links from Gogoanime
+            stream_data = await get_streaming_links_gogoanime(anime_id)
+            
+            if not stream_data or not stream_data.get("sources"):
+                await query.edit_message_text(
+                    "❌ Sorry, streaming is not available at the moment. Please try again later.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            video_url = stream_data["sources"][0]["url"]
+            player_url = f"https://animep.onrender.com/watch?src={video_url}"
+            
+            await query.edit_message_text(
+                f"▶️ Click the link below to watch:\n{player_url}",
+                parse_mode='Markdown'
+            )
+            
+        elif action == "info":
+            # Get more detailed information
+            details = await get_anime_details_jikan(int(anime_id))
+            
+            if not details:
+                await query.edit_message_text(
+                    "❌ Error getting anime details. Please try again.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            info_text = (
+                f"🎬 *{details['data']['title']}*\n\n"
+                f"📝 *Full Synopsis:*\n{details['data']['synopsis']}\n\n"
+                f"⭐ *Score:* {details['data']['score']}\n"
+                f"📊 *Status:* {details['data']['status']}\n"
+                f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n"
+                f"📅 *Aired:* {details['data']['aired']['string']}\n"
+                f"📺 *Episodes:* {details['data']['episodes']}\n"
+                f"⏱️ *Duration:* {details['data']['duration']}\n"
+                f"📌 *Rating:* {details['data']['rating']}\n"
+            )
+            
+            keyboard = [[InlineKeyboardButton("▶️ Watch", callback_data=f"watch_{anime_id}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error in button callback: {e}")
+        await query.edit_message_text(
+            "❌ An error occurred. Please try again.",
+            parse_mode='Markdown'
+        )
 
 async def initialize_telegram_app():
     """Initialize the Telegram application"""
@@ -195,6 +216,7 @@ async def initialize_telegram_app():
         # Add handlers
         telegram_app.add_handler(CommandHandler("start", start))
         telegram_app.add_handler(CommandHandler("anime", anime))
+        telegram_app.add_handler(CallbackQueryHandler(button_callback))
         
         # Initialize the application
         await telegram_app.initialize()
