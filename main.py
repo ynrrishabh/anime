@@ -44,7 +44,7 @@ async def search_anime_jikan(query: str) -> Optional[List[Dict]]:
                 f"{JIKAN_API_BASE}/anime",
                 params={
                     "q": query,
-                    "sfw": True,
+                    "sfw": "true",  # Convert boolean to string
                     "limit": 5  # Limit results to 5
                 }
             ) as response:
