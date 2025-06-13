@@ -22,7 +22,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # API URLs
 JIKAN_API_BASE = "https://api.jikan.moe/v4"
-GOGOANIME_API_BASE = "https://api.consumet.org/anime/gogoanime"
+GOGOANIME_API_BASE = "https://consumet-api-0kir.onrender.com/anime/gogoanime"
 
 # Validate environment variables
 if not BOT_TOKEN:
