@@ -49,8 +49,8 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send "searching..." message
         searching_msg = await update.message.reply_text("🔍 Searching for anime...")
         
-        # Search for anime
-        search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime/{query}"
+        # Search for anime (fixed URL format)
+        search_url = f"https://consumet-api-0kir.onrender.com/anime/gogoanime?query={query}"
         
         try:
             response = requests.get(search_url, timeout=15)
