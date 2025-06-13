@@ -1,8 +1,9 @@
-python-telegram-bot
+python-telegram-bot>=20.0
 fastapi
+aiohttp
+bs4
 uvicorn
 requests
-aiohttp
 python-dotenv
 pydantic
 typing-extensions
