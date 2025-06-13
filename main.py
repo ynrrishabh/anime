@@ -92,15 +92,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in help command: {e}")
 
 async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
+        if not context.args:
         await update.message.reply_text("❗ Usage: /anime <name>\nExample: /anime naruto")
-        return
-    query = " ".join(context.args)
+            return
+        query = " ".join(context.args)
     msg = await update.message.reply_text("🔍 Searching for anime...")
     results = await search_animesalt(query)
     if not results:
         await msg.edit_text("❌ No series found. Please check the name and try again.")
-        return
+            return
     keyboard = [[InlineKeyboardButton(r["title"], callback_data=f"series:{r['url']}")] for r in results]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await msg.edit_text("🎬 *Select a series:*", reply_markup=reply_markup, parse_mode='Markdown')
@@ -154,11 +154,20 @@ async def telegram_webhook(request: Request):
     if not telegram_app or not telegram_app.running:
         logger.error("Telegram app not initialized")
         raise HTTPException(status_code=500, detail="Bot not initialized")
-    json_data = await request.json()
-    update = Update.de_json(json_data, telegram_app.bot)
-    if update:
-        await telegram_app.process_update(update)
-        logger.info("Update processed successfully")
-    else:
-        logger.warning("Failed to create Update object from JSON")
-    return {"status": "ok"}
+        json_data = await request.json()
+        update = Update.de_json(json_data, telegram_app.bot)
+        if update:
+            await telegram_app.process_update(update)
+            logger.info("Update processed successfully")
+        else:
+            logger.warning("Failed to create Update object from JSON")
+        return {"status": "ok"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:fastapi_app",
+        host="0.0.0.0",
+        port=10000,
+        log_level="info"
+    )
