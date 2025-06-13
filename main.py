@@ -38,10 +38,20 @@ async def search_anime_jikan(query: str) -> Optional[List[Dict]]:
     """Search anime using Jikan API"""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{JIKAN_API_BASE}/anime", params={"q": query, "sfw": True}) as response:
+            # Add delay to respect rate limits
+            await asyncio.sleep(1)
+            async with session.get(
+                f"{JIKAN_API_BASE}/anime",
+                params={
+                    "q": query,
+                    "sfw": True,
+                    "limit": 5  # Limit results to 5
+                }
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
                     return data.get("data", [])
+                logger.error(f"Jikan API error: {response.status}")
                 return None
     except Exception as e:
         logger.error(f"Error searching Jikan API: {e}")
@@ -86,11 +96,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in start command: {e}")
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command"""
+    try:
+        help_text = (
+            "🎬 *Anime Bot Help*\n\n"
+            "*Available Commands:*\n"
+            "• /start - Start the bot\n"
+            "• /help - Show this help message\n"
+            "• /anime <name> - Search for an anime\n\n"
+            "*How to use:*\n"
+            "1. Use /anime followed by the anime name\n"
+            "2. Select from the search results\n"
+            "3. Click 'Watch' to get the streaming link\n"
+            "4. Click 'More Info' for detailed information\n\n"
+            "*Example:*\n"
+            "/anime naruto\n"
+            "/anime one piece\n"
+            "/anime demon slayer"
+        )
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+        logger.info(f"Help command sent to user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"Error in help command: {e}")
+
 async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /anime command"""
     try:
         if not context.args:
-            await update.message.reply_text("❗ Usage: /anime <name>")
+            await update.message.reply_text(
+                "❗ Usage: /anime <name>\nExample: /anime naruto",
+                parse_mode='Markdown'
+            )
             return
         
         query = " ".join(context.args)
@@ -103,41 +140,28 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         anime_list = await search_anime_jikan(query)
         
         if not anime_list or len(anime_list) == 0:
-            await searching_msg.edit_text("❌ No anime found. Please try a different search term.")
+            await searching_msg.edit_text(
+                "❌ No anime found. Please try:\n"
+                "• Check the spelling\n"
+                "• Use English titles\n"
+                "• Try alternative names\n"
+                "Example: /anime naruto shippuden"
+            )
             return
         
-        # Get the first result
-        anime_data = anime_list[0]
-        anime_id = anime_data["mal_id"]
-        title = anime_data["title"]
+        # Create message with search results
+        results_text = "🎬 *Search Results:*\n\n"
+        keyboard = []
         
-        # Get detailed information
-        details = await get_anime_details_jikan(anime_id)
+        for idx, anime in enumerate(anime_list[:5], 1):
+            title = anime["title"]
+            year = anime.get("year", "N/A")
+            score = anime.get("score", "N/A")
+            results_text += f"{idx}. *{title}* ({year}) - ⭐ {score}\n"
+            keyboard.append([InlineKeyboardButton(f"Select {title[:20]}...", callback_data=f"select_{anime['mal_id']}")])
         
-        if not details:
-            await searching_msg.edit_text("❌ Error getting anime details. Please try again.")
-            return
-        
-        # Create message with anime information
-        info_text = (
-            f"🎬 *{title}*\n\n"
-            f"📝 *Synopsis:*\n{details['data']['synopsis'][:300]}...\n\n"
-            f"⭐ *Score:* {details['data']['score']}\n"
-            f"📊 *Status:* {details['data']['status']}\n"
-            f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n\n"
-            f"Would you like to watch this anime?"
-        )
-        
-        # Create inline keyboard
-        keyboard = [
-            [
-                InlineKeyboardButton("▶️ Watch", callback_data=f"watch_{anime_id}"),
-                InlineKeyboardButton("ℹ️ More Info", callback_data=f"info_{anime_id}")
-            ]
-        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await searching_msg.edit_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await searching_msg.edit_text(results_text, reply_markup=reply_markup, parse_mode='Markdown')
         
     except Exception as e:
         logger.error(f"Error in anime command handler: {e}")
@@ -151,7 +175,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         action, anime_id = query.data.split('_')
         
-        if action == "watch":
+        if action == "select":
+            # Get detailed information
+            details = await get_anime_details_jikan(int(anime_id))
+            
+            if not details:
+                await query.edit_message_text(
+                    "❌ Error getting anime details. Please try again.",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            info_text = (
+                f"🎬 *{details['data']['title']}*\n\n"
+                f"📝 *Synopsis:*\n{details['data']['synopsis'][:300]}...\n\n"
+                f"⭐ *Score:* {details['data']['score']}\n"
+                f"📊 *Status:* {details['data']['status']}\n"
+                f"🎭 *Genres:* {', '.join(genre['name'] for genre in details['data']['genres'])}\n\n"
+                f"Would you like to watch this anime?"
+            )
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("▶️ Watch", callback_data=f"watch_{anime_id}"),
+                    InlineKeyboardButton("ℹ️ More Info", callback_data=f"info_{anime_id}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+        elif action == "watch":
             # Try to get streaming links from Gogoanime
             stream_data = await get_streaming_links_gogoanime(anime_id)
             
@@ -215,6 +269,7 @@ async def initialize_telegram_app():
         
         # Add handlers
         telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("help", help_command))
         telegram_app.add_handler(CommandHandler("anime", anime))
         telegram_app.add_handler(CallbackQueryHandler(button_callback))
         
