@@ -120,9 +120,9 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Successfully got anime list from: {working_url}")
         anime_id = anime_list[0]["id"]
         title = anime_list[0]["title"]
-            
-            # Update message
-            await searching_msg.edit_text("📺 Found anime! Getting episode info...")
+        
+        # Update message
+        await searching_msg.edit_text("📺 Found anime! Getting episode info...")
             
             # Fetch episode info
             ep_response = requests.get(
