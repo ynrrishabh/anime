@@ -283,9 +283,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("▶️ Watch Episode", url=player_link)]
         ])
         await query.edit_message_text(
-            f"*Ready to Watch!*
-
-[Open in Mini Player]({player_link})",
+            f"*Ready to Watch!*\n\n[Open in Mini Player]({player_link})",
             reply_markup=watch_button,
             parse_mode='Markdown',
             disable_web_page_preview=False
