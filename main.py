@@ -166,6 +166,34 @@ async def scrape_series_details(series_url: str):
         logger.error(f"Error scraping series details: {e}")
         return None
 
+async def scrape_episodes(series_path: str, season_num: str, post_id: str):
+    """Scrape all episodes for a given series and season."""
+    try:
+        # The episode list is loaded on the series page, filtered by season
+        url = f"{ANIMESALT_BASE}{series_path}?temp={season_num}&post={post_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to fetch episodes page: {resp.status}")
+                    return []
+                html = await resp.text()
+        soup = BeautifulSoup(html, "html.parser")
+        ul = soup.find("ul", id="episode_by_temp")
+        episodes = []
+        if ul:
+            for li in ul.find_all("li", recursive=False):
+                a = li.find("a", class_="lnk-blk", href=True)
+                header = li.find("header", class_="entry-header")
+                num = header.find("span", class_="num-epi").text.strip() if header and header.find("span", class_="num-epi") else None
+                name = header.find("h2", class_="entry-title").text.strip() if header and header.find("h2", class_="entry-title") else None
+                url = a["href"] if a else None
+                if num and name and url:
+                    episodes.append({"num": num, "name": name, "url": url})
+        return episodes
+    except Exception as e:
+        logger.error(f"Error scraping episodes: {e}")
+        return []
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -192,6 +220,44 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text(f"🎬 *Series Details*\n\n{overview_text}{details_text}\n\nNo seasons found.", parse_mode='Markdown')
+    elif action == "season":
+        # season:{series_path}:{season_num}:{post_id}:page:{page_num}
+        series_path = data[1]
+        season_num = data[2]
+        post_id = data[3]
+        page_num = int(data[5]) if len(data) > 5 and data[4] == "page" else 1
+        episodes = await scrape_episodes(series_path, season_num, post_id)
+        if not episodes:
+            await query.edit_message_text("❌ No episodes found for this season.")
+            return
+        # Pagination
+        per_page = 5
+        total_pages = (len(episodes) + per_page - 1) // per_page
+        page_num = max(1, min(page_num, total_pages))
+        start = (page_num - 1) * per_page
+        end = start + per_page
+        page_episodes = episodes[start:end]
+        # Message: list all episodes with numbering and names
+        ep_lines = [f"{ep['num']}. {ep['name']}" for ep in episodes]
+        ep_list_text = "\n".join(ep_lines)
+        # Inline buttons: 5 episode numbers per page
+        keyboard = []
+        row = []
+        for ep in page_episodes:
+            row.append(InlineKeyboardButton(ep["num"], callback_data=f"episode:{series_path}:{season_num}:{post_id}:{ep['num']}"))
+        keyboard.append(row)
+        nav_row = []
+        if page_num > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"season:{series_path}:{season_num}:{post_id}:page:{page_num-1}"))
+        if page_num < total_pages:
+            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"season:{series_path}:{season_num}:{post_id}:page:{page_num+1}"))
+        if nav_row:
+            keyboard.append(nav_row)
+        await query.edit_message_text(
+            f"*Episodes for Season {season_num}:*\n\n{ep_list_text}\n\n_Choose an episode number below:_",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
 
 async def initialize_telegram_app():
     global telegram_app
