@@ -187,7 +187,8 @@ async def scrape_episodes(series_path: str, season_num: str, post_id: str):
         headers = {
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest",
-            "Referer": f"{ANIMESALT_BASE}{series_path}"
+            "Referer": f"{ANIMESALT_BASE}{series_path}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(ajax_url, data=data, headers=headers) as resp:
@@ -207,6 +208,8 @@ async def scrape_episodes(series_path: str, season_num: str, post_id: str):
                 url = a["href"] if a else None
                 if num and name and url:
                     episodes.append({"num": num, "name": name, "url": url})
+        else:
+            logger.error(f"No episode list found in AJAX response. HTML: {html[:500]}")
         return episodes
     except Exception as e:
         logger.error(f"Error scraping episodes: {e}")
