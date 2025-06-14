@@ -6,6 +6,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 import aiohttp
 from bs4 import BeautifulSoup
 import re
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(
@@ -114,7 +115,11 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not results:
         await msg.edit_text("❌ No series found. Please check the name and try again.")
         return
-    keyboard = [[InlineKeyboardButton(r["title"], callback_data=f"series:{r['url']}")] for r in results]
+    keyboard = []
+    for r in results:
+        parsed = urlparse(r["url"])
+        path = parsed.path  # e.g., /series/demon-slayer/
+        keyboard.append([InlineKeyboardButton(r["title"], callback_data=f"series:{path}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await msg.edit_text("🎬 *Select a series:*", reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -160,20 +165,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split(":")
     action = data[0]
     if action == "series":
-        series_url = data[1]
-        # Ensure full URL
-        if not series_url.startswith("http"):
-            if series_url.startswith("/"):
-                series_url = ANIMESALT_BASE + series_url
-            else:
-                series_url = ANIMESALT_BASE + "/" + series_url
+        series_path = data[1]
+        series_url = ANIMESALT_BASE + series_path
         details = await scrape_series_details(series_url)
         if not details:
             await query.edit_message_text("❌ Failed to fetch series details.")
             return
         details_text = '\n'.join(details["details"]) if details["details"] else "No details found."
         if details["seasons"]:
-            keyboard = [[InlineKeyboardButton(s["label"], callback_data=f"season:{series_url}:{s['season']}:{s['post_id']}")] for s in details["seasons"]]
+            keyboard = [[InlineKeyboardButton(s["label"], callback_data=f"season:{series_path}:{s['season']}:{s['post_id']}")] for s in details["seasons"]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
                 f"🎬 *Series Details*\n\n{details_text}\n\n*Choose a season:*",
