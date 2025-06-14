@@ -45,10 +45,22 @@ async def search_animesalt(query: str):
             a = li.find("a", href=True)
             if not a:
                 continue
-            title = a.get("title") or a.text.strip()
+            # Try to get title from img alt first
+            img = a.find("img", alt=True)
+            title = img["alt"] if img and img.has_attr("alt") else None
+            
+            # If no img alt, try to get from title attribute
             if not title:
-                img = a.find("img", alt=True)
-                title = img["alt"] if img and img.has_attr("alt") else "Unknown"
+                title = a.get("title")
+            
+            # If still no title, try to get from text content
+            if not title:
+                title = a.text.strip()
+            
+            # If all else fails, use the URL as a fallback
+            if not title:
+                title = a["href"].split("/")[-2].replace("-", " ").title()
+            
             url = a["href"]
             results.append({"title": title, "url": url})
         return results
@@ -111,7 +123,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split(":")
     action = data[0]
     if action == "series":
-        await query.edit_message_text("You selected a series! (Season/episode selection coming soon.)")
+        url = data[1]
+        # TODO: Implement season/episode selection
+        await query.edit_message_text(
+            f"🎬 *Series Selected*\n\n"
+            f"URL: {url}\n\n"
+            f"Season and episode selection coming soon!",
+            parse_mode='Markdown'
+        )
 
 async def initialize_telegram_app():
     global telegram_app
