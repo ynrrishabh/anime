@@ -179,8 +179,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Failed to fetch series details.")
             return
         overview_text = f"*Overview:*\n{details['overview']}\n\n" if details["overview"] else ""
-        # Remove 'min' from details
-        filtered_details = [d for d in details["details"] if d.strip().lower() != "min"]
+        # Split details string into separate items, filter out 'min', and join with proper spacing
+        details_items = []
+        for d in details["details"]:
+            # Split on numbers followed by letters or vice versa, or just spaces
+            items = re.findall(r"\d+\s*\w+|\d+|\w+", d)
+            details_items.extend(items)
+        filtered_details = [item for item in details_items if item.strip().lower() != "min"]
         details_text = " • ".join(filtered_details) if filtered_details else "No details found."
         if details["seasons"]:
             keyboard = [[InlineKeyboardButton(s["label"], callback_data=f"season:{series_path}:{s['season']}:{s['post_id']}")] for s in details["seasons"]]
