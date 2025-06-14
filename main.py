@@ -25,6 +25,15 @@ if not WEBHOOK_URL:
 
 ANIMESALT_BASE = "https://animesalt.cc"
 
+PLAYER_SERVERS = [
+    "https://animep.onrender.com"
+    # Add more servers here in the future
+]
+
+def get_player_server():
+    # For now, just return the first one
+    return PLAYER_SERVERS[0]
+
 telegram_app = None
 fastapi_app = FastAPI()
 
@@ -257,6 +266,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"*Episodes for Season {season_num}:*\n\n{ep_list_text}\n\n_Choose an episode number below:_",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
+        )
+    elif action == "episode":
+        # episode:{series_path}:{season_num}:{post_id}:{ep_num}
+        series_path = data[1]
+        season_num = data[2]
+        post_id = data[3]
+        ep_num = data[4]
+        # Build episode URL: https://animesalt.cc/episode/{slug}-{season_num}x{ep_num}/
+        slug = series_path.strip("/").split("/")[-1]
+        episode_url = f"https://animesalt.cc/episode/{slug}-{season_num}x{ep_num}/"
+        player_server = get_player_server()
+        player_link = f"{player_server}/play?ep_url={episode_url}"
+        # Send a button to open the player in a web app
+        watch_button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ Watch Episode", url=player_link)]
+        ])
+        await query.edit_message_text(
+            f"*Ready to Watch!*
+
+[Open in Mini Player]({player_link})",
+            reply_markup=watch_button,
+            parse_mode='Markdown',
+            disable_web_page_preview=False
         )
 
 async def initialize_telegram_app():
