@@ -178,8 +178,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not details:
             await query.edit_message_text("❌ Failed to fetch series details.")
             return
-        overview_text = f"*Overview:*
-{details['overview']}\n\n" if details["overview"] else ""
+        overview_text = f"*Overview:*\n{details['overview']}\n\n" if details["overview"] else ""
         # Remove 'min' from details
         filtered_details = [d for d in details["details"] if d.strip().lower() != "min"]
         details_text = " • ".join(filtered_details) if filtered_details else "No details found."
