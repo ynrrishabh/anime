@@ -176,14 +176,23 @@ async def scrape_series_details(series_url: str):
         return None
 
 async def scrape_episodes(series_path: str, season_num: str, post_id: str):
-    """Scrape all episodes for a given series and season."""
+    """Scrape all episodes for a given series and season using the AJAX endpoint."""
     try:
-        # The episode list is loaded on the series page, filtered by season
-        url = f"{ANIMESALT_BASE}{series_path}?temp={season_num}&post={post_id}"
+        ajax_url = f"{ANIMESALT_BASE}/wp-admin/admin-ajax.php"
+        data = {
+            "action": "action_select_season",
+            "season": season_num,
+            "post": post_id
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"{ANIMESALT_BASE}{series_path}"
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
+            async with session.post(ajax_url, data=data, headers=headers) as resp:
                 if resp.status != 200:
-                    logger.error(f"Failed to fetch episodes page: {resp.status}")
+                    logger.error(f"Failed to fetch episodes via AJAX: {resp.status}")
                     return []
                 html = await resp.text()
         soup = BeautifulSoup(html, "html.parser")
