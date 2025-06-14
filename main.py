@@ -124,7 +124,7 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text("🎬 *Select a series:*", reply_markup=reply_markup, parse_mode='Markdown')
 
 async def scrape_series_details(series_url: str):
-    """Scrape the series page for details and available seasons."""
+    """Scrape the series page for overview, details, and available seasons."""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(series_url) as resp:
@@ -133,6 +133,13 @@ async def scrape_series_details(series_url: str):
                     return None
                 html = await resp.text()
         soup = BeautifulSoup(html, "html.parser")
+        # Overview
+        overview = None
+        overview_div = soup.find("div", id="overview-text")
+        if overview_div:
+            p = overview_div.find("p")
+            if p:
+                overview = p.get_text(strip=True)
         # Details block
         details_div = soup.find("div", style=re.compile(r"flex-wrap: wrap"))
         details = []
@@ -154,7 +161,7 @@ async def scrape_series_details(series_url: str):
                         season_label = a.text.strip()
                         post_id = a["data-post"]
                         seasons.append({"season": season_num, "label": season_label, "post_id": post_id})
-        return {"details": details, "seasons": seasons}
+        return {"overview": overview, "details": details, "seasons": seasons}
     except Exception as e:
         logger.error(f"Error scraping series details: {e}")
         return None
@@ -171,17 +178,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not details:
             await query.edit_message_text("❌ Failed to fetch series details.")
             return
-        details_text = '\n'.join(details["details"]) if details["details"] else "No details found."
+        overview_text = f"*Overview:*
+{details['overview']}\n\n" if details["overview"] else ""
+        # Remove 'min' from details
+        filtered_details = [d for d in details["details"] if d.strip().lower() != "min"]
+        details_text = " • ".join(filtered_details) if filtered_details else "No details found."
         if details["seasons"]:
             keyboard = [[InlineKeyboardButton(s["label"], callback_data=f"season:{series_path}:{s['season']}:{s['post_id']}")] for s in details["seasons"]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"🎬 *Series Details*\n\n{details_text}\n\n*Choose a season:*",
+                f"🎬 *Series Details*\n\n{overview_text}{details_text}\n\n*Choose a season:*",
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
         else:
-            await query.edit_message_text(f"🎬 *Series Details*\n\n{details_text}\n\nNo seasons found.", parse_mode='Markdown')
+            await query.edit_message_text(f"🎬 *Series Details*\n\n{overview_text}{details_text}\n\nNo seasons found.", parse_mode='Markdown')
 
 async def initialize_telegram_app():
     global telegram_app
