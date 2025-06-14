@@ -148,20 +148,25 @@ async def root():
     else:
         return {"status": "Bot is starting up..."}
 
+@fastapi_app.on_event("startup")
+async def on_startup():
+    await initialize_telegram_app()
+
 @fastapi_app.post("/")
 async def telegram_webhook(request: Request):
     global telegram_app
     if not telegram_app or not telegram_app.running:
         logger.error("Telegram app not initialized")
         raise HTTPException(status_code=500, detail="Bot not initialized")
-        json_data = await request.json()
-        update = Update.de_json(json_data, telegram_app.bot)
-        if update:
-            await telegram_app.process_update(update)
-            logger.info("Update processed successfully")
-        else:
-            logger.warning("Failed to create Update object from JSON")
-        return {"status": "ok"}
+    
+    json_data = await request.json()
+    update = Update.de_json(json_data, telegram_app.bot)
+    if update:
+        await telegram_app.process_update(update)
+        logger.info("Update processed successfully")
+    else:
+        logger.warning("Failed to create Update object from JSON")
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
