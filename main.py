@@ -197,19 +197,22 @@ async def scrape_episodes(series_path: str, season_num: str, post_id: str):
                     return []
                 html = await resp.text()
         soup = BeautifulSoup(html, "html.parser")
-        ul = soup.find("ul", id="episode_by_temp")
         episodes = []
+        li_list = []
+        ul = soup.find("ul", id="episode_by_temp")
         if ul:
-            for li in ul.find_all("li", recursive=False):
-                a = li.find("a", class_="lnk-blk", href=True)
-                header = li.find("header", class_="entry-header")
-                num = header.find("span", class_="num-epi").text.strip() if header and header.find("span", class_="num-epi") else None
-                name = header.find("h2", class_="entry-title").text.strip() if header and header.find("h2", class_="entry-title") else None
-                url = a["href"] if a else None
-                if num and name and url:
-                    episodes.append({"num": num, "name": name, "url": url})
+            li_list = ul.find_all("li", recursive=False)
         else:
-            logger.error(f"No episode list found in AJAX response. HTML: {html[:500]}")
+            # AJAX response is likely a fragment: just <li> elements
+            li_list = soup.find_all("li", recursive=False)
+        for li in li_list:
+            a = li.find("a", class_="lnk-blk", href=True)
+            header = li.find("header", class_="entry-header")
+            num = header.find("span", class_="num-epi").text.strip() if header and header.find("span", class_="num-epi") else None
+            name = header.find("h2", class_="entry-title").text.strip() if header and header.find("h2", class_="entry-title") else None
+            url = a["href"] if a else None
+            if num and name and url:
+                episodes.append({"num": num, "name": name, "url": url})
         return episodes
     except Exception as e:
         logger.error(f"Error scraping episodes: {e}")
