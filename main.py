@@ -5,6 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 import aiohttp
 from bs4 import BeautifulSoup
+import re
 
 # Configure logging
 logging.basicConfig(
@@ -117,20 +118,70 @@ async def anime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await msg.edit_text("🎬 *Select a series:*", reply_markup=reply_markup, parse_mode='Markdown')
 
+async def scrape_series_details(series_url: str):
+    """Scrape the series page for details and available seasons."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(series_url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to fetch series page: {resp.status}")
+                    return None
+                html = await resp.text()
+        soup = BeautifulSoup(html, "html.parser")
+        # Details block
+        details_div = soup.find("div", style=re.compile(r"flex-wrap: wrap"))
+        details = []
+        if details_div:
+            for child in details_div.find_all("div", recursive=False):
+                text = child.get_text(strip=True)
+                if text:
+                    details.append(text)
+        # Seasons
+        seasons = []
+        season_header = soup.find("div", class_="choose-season")
+        if season_header:
+            ul = season_header.find("ul", class_="aa-cnt")
+            if ul:
+                for li in ul.find_all("li"):
+                    a = li.find("a", attrs={"data-season": True, "data-post": True})
+                    if a:
+                        season_num = a["data-season"]
+                        season_label = a.text.strip()
+                        post_id = a["data-post"]
+                        seasons.append({"season": season_num, "label": season_label, "post_id": post_id})
+        return {"details": details, "seasons": seasons}
+    except Exception as e:
+        logger.error(f"Error scraping series details: {e}")
+        return None
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data.split(":")
     action = data[0]
     if action == "series":
-        url = data[1]
-        # TODO: Implement season/episode selection
-        await query.edit_message_text(
-            f"🎬 *Series Selected*\n\n"
-            f"URL: {url}\n\n"
-            f"Season and episode selection coming soon!",
-            parse_mode='Markdown'
-        )
+        series_url = data[1]
+        # Ensure full URL
+        if not series_url.startswith("http"):
+            if series_url.startswith("/"):
+                series_url = ANIMESALT_BASE + series_url
+            else:
+                series_url = ANIMESALT_BASE + "/" + series_url
+        details = await scrape_series_details(series_url)
+        if not details:
+            await query.edit_message_text("❌ Failed to fetch series details.")
+            return
+        details_text = '\n'.join(details["details"]) if details["details"] else "No details found."
+        if details["seasons"]:
+            keyboard = [[InlineKeyboardButton(s["label"], callback_data=f"season:{series_url}:{s['season']}:{s['post_id']}")] for s in details["seasons"]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                f"🎬 *Series Details*\n\n{details_text}\n\n*Choose a season:*",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text(f"🎬 *Series Details*\n\n{details_text}\n\nNo seasons found.", parse_mode='Markdown')
 
 async def initialize_telegram_app():
     global telegram_app
